@@ -1,0 +1,126 @@
+---
+- hosts: all
+  become: true
+  tasks:
+    
+    - name: Installing traceroute package on hosts
+      apt:
+        name: traceroute
+        update_cache: yes
+        state: present
+      ignore_errors: true
+
+    - name: Installing nmap package on -centralRouter-  
+      apt:
+        name: nmap
+        state: present
+      ignore_errors: true
+      when: ansible_hostname == "centralRouter"
+
+    - name: Installing NGINX on -centralServer
+      apt:
+        name: nginx
+        state: present
+      ignore_errors: true
+      when: ansible_hostname == "centralServer"
+
+    - name: Set up forward packages across routers
+      sysctl:
+        name: net.ipv4.ip_forward
+        value: '1'
+        state: present
+      when: "'routers' in group_names"
+
+    - name: Copying knock script on -centralRouter-
+      template:
+        src: knock.j2
+        dest: /home/vagrant/knock
+        mode: 0755
+      when: ansible_hostname == "centralRouter"
+
+    - name: Disabling default route on all hosts except -inetRouter- and -inetRouter2-
+      template:
+        src: 50-cloud-init.j2
+        dest: /etc/netplan/50-cloud-init.yaml
+        owner: root
+        group: root
+        mode: 0644
+      when:
+        - ansible_hostname != "inetRouter" 
+        - ansible_hostname != "inetRouter2"   
+
+    - name: Route configuring on hosts
+      template:
+        src: 50-vagrant-{{ ansible_hostname }}.j2
+        dest: /etc/netplan/50-vagrant.yaml
+        owner: root
+        group: root
+        mode: 0644
+
+
+- name: Configuring -inetRouter-
+  hosts: inetRouter
+  become: true
+  tasks:
+    - name: Disabling ufw service
+      systemd:
+        name: ufw
+        state: stopped
+        enabled: no
+
+    - name: Installing iptables-persistent service
+      apt:
+        name: iptables-persistent
+        state: present
+      ignore_errors: true 
+    
+    - name: Set up NAT
+      template:
+        src: rules_inetRouter.v4
+        dest: /etc/iptables/rules.v4
+        owner: root
+        group: root
+        mode: 0644
+
+    - name: Configuring SSH service
+      replace:
+        path: /etc/ssh/sshd_config.d/60-cloudimg-settings.conf
+        regexp: "PasswordAuthentication no"
+        replace: "PasswordAuthentication yes"
+    
+    - name: Restarting SSH service
+      systemd:
+        name: sshd
+        state: restarted
+       
+- name: Configuring -inetRouter2-
+  hosts: inetRouter2
+  become: true
+  tasks:
+    - name: Disabling ufw service
+      systemd:
+        name: ufw
+        state: stopped
+        enabled: no
+
+    - name: Installing iptables-persistent service
+      apt:
+        name: iptables-persistent
+        state: present
+      ignore_errors: true 
+    
+    - name: Set up NAT
+      template:
+        src: rules_inetRouter2.v4
+        dest: /etc/iptables/rules.v4
+        owner: root
+        group: root
+        mode: 0644 
+
+- hosts: all
+  become: true
+  tasks:
+    - name: Rebooting all hosts
+      reboot:
+        reboot_timeout: 600    
+...
